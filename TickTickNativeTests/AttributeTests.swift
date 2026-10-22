@@ -5,9 +5,10 @@ import Testing
 extension APITests {
     @Test func responseMetadataIsNotSentAndFloatingFalseIsPreserved() async throws {
         var fields: [String: JSONValue] = ["id": .string("t"), "projectId": .string("p"), "title": .string("sample"),
-            "isFloating": .bool(false), "modifiedTime": .string("2026-10-23T00:00:00Z"), "etimestamp": .integer(123), "etag": .string("before")]
+            "createdTime": .string("2026-10-20T00:00:00Z"), "isFloating": .bool(false), "modifiedTime": .string("2026-10-23T00:00:00Z"), "etimestamp": .integer(123), "etag": .string("before")]
         let original = TaskRecord(fields: fields)
         let body = try original.updating(["repeatFlag": .string(SimpleRecurrence.daily.rule)])
+        #expect(body["createdTime"] == nil)
         #expect(body["isFloating"] == nil)
         #expect(body["modifiedTime"] == nil)
         #expect(body["etimestamp"] == nil)
@@ -23,6 +24,7 @@ extension APITests {
         }
         let saved = try await api.update(record: original, changes: ["repeatFlag": .string(SimpleRecurrence.daily.rule)], token: "sample")
         #expect(saved.fields["isFloating"] == .bool(false))
+        #expect(saved.fields["createdTime"] == original.fields["createdTime"])
     }
 
     @Test func floatingTimeAndUnexpectedAttributeLossAreNotIgnored() throws {

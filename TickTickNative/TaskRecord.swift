@@ -67,7 +67,7 @@ nonisolated struct TaskRecord: Codable, Equatable, Sendable {
     func updating(_ changes: [String: JSONValue]) throws -> [String: JSONValue] {
         let writable: Set<String> = ["id", "projectId", "title", "content", "desc", "isAllDay", "startDate", "dueDate",
                                      "timeZone", "reminders", "tags", "repeatFlag", "repeatFrom", "priority", "sortOrder", "items"]
-        let readOnly: Set<String> = ["status", "completedTime", "kind", "etag", "focusSummaries", "parentId", "assigneeUsername", "etimestamp", "modifiedTime", "isFloating"]
+        let readOnly: Set<String> = ["status", "completedTime", "kind", "etag", "focusSummaries", "parentId", "assigneeUsername", "etimestamp", "modifiedTime", "createdTime", "isFloating"]
         let unknown = Set(fields.keys).subtracting(writable.union(readOnly))
         guard unknown.isEmpty else { throw TickTickError.unsupportedTaskAttributes(Array(unknown)) }
         // isFloating は公開更新パラメータにない。無効な場合のみ編集し、再取得でも保持を照合する。
