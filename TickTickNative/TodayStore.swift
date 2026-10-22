@@ -39,6 +39,7 @@ final class TodayStore {
     private var groupingID = UUID()
     private var restored = false
     private var snapshot = TaskSnapshot()
+    private var demoRecords: [String: TaskRecord] = [:]
 
     init(isDemo: Bool = false, api: TickTickAPI = TickTickAPI(), initialConnection: TickConnection? = nil, creationJournal: CreationJournal = CreationJournal(), completionJournal: CompletionJournal = CompletionJournal(filename: "pending-completions.json")) {
         self.isDemo = isDemo
@@ -140,7 +141,10 @@ final class TodayStore {
         defer { isSavingTask = false }
         do {
             var confirmed = item.task
-            if isDemo { confirmed.status = 2 }
+            if isDemo {
+                confirmed.status = 2
+                demoRecords[item.id]?.fields["status"] = .integer(2)
+            }
             else if let connection {
                 if item.task.repeatFlag?.isEmpty == false {
                     let receipt = CompletionReceipt(taskID: item.task.id, projectID: item.task.projectId, previousDue: item.task.dueDate)
@@ -216,30 +220,55 @@ final class TodayStore {
 
     func record(for item: ListedTask) async throws -> TaskRecord {
         if isDemo {
+            if let record = demoRecords[item.id] { return record }
             var record = try JSONDecoder().decode(TaskRecord.self, from: JSONEncoder().encode(item.task))
             record.fields["content"] = .string(String(repeating: "作業の背景と確認する手順をここに表示します。\n", count: 12))
             record.fields["priority"] = .integer(3)
             record.fields["items"] = .array([.object(["title": .string("手順を確認する"), "status": .integer(1)]), .object(["title": .string("実行する"), "status": .integer(0)])])
+            demoRecords[item.id] = record
             return record
         }
         guard let connection else { throw TickTickError.unauthorized }
         return try await api.record(projectID: item.task.projectId, taskID: item.task.id, token: connection.accessToken)
     }
 
-    func saveRecurrence(record: TaskRecord, date: Date, allDay: Bool, recurrence: SimpleRecurrence) async -> Bool {
-        guard canWrite, !isSavingTask, !isLoading, !needsAuthorization, let connection else { return false }
+    func saveTask(record: TaskRecord, changes: [String: JSONValue]) async -> Bool {
+        guard canWrite, !isSavingTask, !isLoading, !needsAuthorization else { return false }
         isSavingTask = true
+        errorMessage = nil
         defer { isSavingTask = false }
+        do {
+            let task = try record.task()
+            if let project = snapshot.projects.first(where: { $0.id == task.projectId }), !project.isWritable { throw TickTickError.unauthorized }
+            if isDemo {
+                let fields = try record.updating(changes)
+                let changed = try TaskRecord(fields: fields).task()
+                var retained = record
+                retained.fields.merge(changes) { _, new in new }
+                demoRecords[task.projectId + "/" + task.id] = retained
+                if let index = snapshot.tasks.firstIndex(where: { $0.id == task.projectId + "/" + task.id }) {
+                    snapshot.tasks[index] = ListedTask(task: changed, projectName: snapshot.tasks[index].projectName)
+                }
+                await regroup()
+            } else {
+                guard let connection else { throw TickTickError.unauthorized }
+                _ = try await api.update(record: record, changes: changes, token: connection.accessToken)
+                await refresh()
+            }
+            return true
+        } catch {
+            if case TickTickError.unauthorized = error { needsAuthorization = true }
+            errorMessage = message(for: error)
+            return false
+        }
+    }
+
+    func saveRecurrence(record: TaskRecord, date: Date, allDay: Bool, recurrence: SimpleRecurrence) async -> Bool {
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = .current
         let value = formatter.string(from: allDay ? Calendar.current.startOfDay(for: date) : date)
-        do {
-            let confirmed = try await api.update(record: record, changes: ["startDate": .string(value), "dueDate": .string(value),
-                "isAllDay": .bool(allDay), "timeZone": .string(TimeZone.current.identifier), "repeatFlag": .string(recurrence.rule)], token: connection.accessToken)
-            guard confirmed.fields["repeatFlag"]?.string == recurrence.rule else { throw TickTickError.invalidResponse }
-            await refresh()
-            return true
-        } catch { errorMessage = message(for: error); return false }
+        return await saveTask(record: record, changes: ["startDate": .string(value), "dueDate": .string(value),
+            "isAllDay": .bool(allDay), "timeZone": .string(TimeZone.current.identifier), "repeatFlag": .string(recurrence.rule)])
     }
 
     func createTask(title: String, projectID: String) async -> Bool {
@@ -342,6 +371,7 @@ final class TodayStore {
 
     private func clearSnapshot() {
         snapshot = TaskSnapshot()
+        operationMessage = nil
         today = []
         overdue = []
         warnings = []

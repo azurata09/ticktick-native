@@ -6,6 +6,7 @@ struct TaskDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var record: TaskRecord?
     @State private var error: String?
+    @State private var showsEditor = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -37,8 +38,15 @@ struct TaskDetailView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                 }
             } else { ProgressView("詳細を取得しています…").frame(maxWidth: .infinity) }
-            HStack { Spacer(); Button("閉じる") { dismiss() }.keyboardShortcut(.cancelAction) }
+            HStack {
+                Button("内容を編集…") { showsEditor = true }.disabled(record == nil || !store.canWrite || store.isSavingTask)
+                Spacer()
+                Button("閉じる") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
         }.padding(24).frame(width: 600, height: 560).task { await load() }
+            .sheet(isPresented: $showsEditor, onDismiss: { Task { await load() } }) {
+                if let record { TaskTextEditor(record: record, store: store) }
+            }
     }
 
     @ViewBuilder private func dateDetail(_ label: String, key: String, record: TaskRecord) -> some View {
@@ -62,5 +70,40 @@ struct TaskDetailView: View {
         error = nil
         do { record = try await store.record(for: item) }
         catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct TaskTextEditor: View {
+    let record: TaskRecord
+    @Bindable var store: TodayStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var content: String
+
+    init(record: TaskRecord, store: TodayStore) {
+        self.record = record
+        self.store = store
+        _title = State(initialValue: record.fields["title"]?.string ?? "")
+        _content = State(initialValue: record.fields["content"]?.string ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("タスクの内容を編集").font(.title2)
+            TextField("タイトル", text: $title).textFieldStyle(.roundedBorder).disabled(store.isSavingTask)
+            Text("本文").font(.headline)
+            TextEditor(text: $content).accessibilityLabel("本文").border(.secondary.opacity(0.3)).disabled(store.isSavingTask)
+            if let error = store.errorMessage { Text(error).foregroundStyle(.red) }
+            HStack {
+                Button("キャンセル") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("保存") {
+                    Task {
+                        if await store.saveTask(record: record, changes: ["title": .string(title.trimmingCharacters(in: .whitespacesAndNewlines)), "content": .string(content)]) { dismiss() }
+                    }
+                }.keyboardShortcut(.defaultAction)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }.disabled(store.isSavingTask)
+        }.padding(24).frame(width: 560, height: 460).interactiveDismissDisabled(store.isSavingTask)
     }
 }

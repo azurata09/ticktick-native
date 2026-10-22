@@ -46,6 +46,18 @@ nonisolated struct TaskRecord: Codable, Equatable, Sendable {
 
     func task() throws -> TickTask { try JSONDecoder().decode(TickTask.self, from: JSONEncoder().encode(self)) }
 
+    func confirms(_ changes: [String: JSONValue]) -> Bool {
+        changes.allSatisfy { key, expected in
+            if expected == .null { return fields[key] == nil || fields[key] == .null }
+            if key == "startDate" || key == "dueDate", let before = expected.string, let after = fields[key]?.string {
+                let schedule = TaskSchedule(calendar: .current)
+                let allDay = fields["isAllDay"] == .bool(true)
+                if let a = schedule.date(before, allDay: allDay), let b = schedule.date(after, allDay: allDay) { return a == b }
+            }
+            return fields[key] == expected
+        }
+    }
+
     func updating(_ changes: [String: JSONValue]) throws -> [String: JSONValue] {
         let writable: Set<String> = ["id", "projectId", "title", "content", "desc", "isAllDay", "startDate", "dueDate",
                                      "timeZone", "reminders", "tags", "repeatFlag", "repeatFrom", "priority", "sortOrder", "items"]

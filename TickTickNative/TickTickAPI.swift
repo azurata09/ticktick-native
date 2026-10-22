@@ -1,6 +1,7 @@
 import Foundation
 
 nonisolated enum TickTickError: LocalizedError {
+    case updateUncertain
     case conflict
     case unsupportedFields
     case recurringNotSupported
@@ -19,6 +20,7 @@ nonisolated enum TickTickError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .updateUncertain: "保存結果を確認できませんでした。入力を保持しています。タスクを読み直して結果を確認してください。"
         case .conflict: "別の場所でタスクが変更されました。読み直して変更内容を確認してください。"
         case .unsupportedFields: "このタスクには未対応の情報があるため、安全に変更できません。元の内容は変更していません。"
         case .recurringNotSupported: "繰り返しタスクの完了は、繰り返し対応後に利用できます。"
@@ -146,8 +148,11 @@ actor TickTickAPI {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        _ = try await perform(request)
-        return try await self.record(projectID: original.projectId, taskID: original.id, token: token)
+        var failure: Error?
+        do { _ = try await perform(request) } catch { failure = error }
+        let confirmed = try await self.record(projectID: original.projectId, taskID: original.id, token: token)
+        guard confirmed.confirms(changes) else { throw failure ?? TickTickError.updateUncertain }
+        return confirmed
     }
 
     func complete(projectID: String, taskID: String, token: String, expected: TickTask? = nil) async throws -> TickTask {
