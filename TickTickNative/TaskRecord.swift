@@ -49,6 +49,13 @@ nonisolated struct TaskRecord: Codable, Equatable, Sendable {
     func confirms(_ changes: [String: JSONValue]) -> Bool {
         changes.allSatisfy { key, expected in
             let actual = fields[key]
+            if key == "repeatFlag", let requested = expected.string, let requestedRule = SimpleRecurrence.matching(requested) {
+                switch actual {
+                case nil, .null: return requestedRule == .none
+                case .string(let value): return SimpleRecurrence.matching(value) == requestedRule
+                default: return false
+                }
+            }
             let optionalText: Set<String> = ["content", "desc", "repeatFlag", "parentId"]
             let optionalLists: Set<String> = ["tags", "reminders", "items"]
             if actual == nil || actual == .null {
@@ -104,7 +111,20 @@ nonisolated enum SimpleRecurrence: String, CaseIterable, Identifiable {
         }
     }
     static func matching(_ rule: String?) -> SimpleRecurrence? {
-        guard let rule, !rule.isEmpty else { return SimpleRecurrence.none }
-        return allCases.first { $0.rule == rule || $0.rule.replacingOccurrences(of: ";INTERVAL=1", with: "") == rule }
+        guard let rule, !rule.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return SimpleRecurrence.none }
+        var raw = rule.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if raw.hasPrefix("RRULE:") { raw.removeFirst(6) }
+        var parts: [String: String] = [:]
+        for part in raw.split(separator: ";", omittingEmptySubsequences: false) {
+            let pair = part.split(separator: "=", maxSplits: 1)
+            guard pair.count == 2, parts[String(pair[0])] == nil else { return nil }
+            parts[String(pair[0])] = String(pair[1])
+        }
+        guard let frequency = parts.removeValue(forKey: "FREQ"),
+              frequency == "DAILY" || frequency == "WEEKLY" else { return nil }
+        if let interval = parts.removeValue(forKey: "INTERVAL"), Int(interval) != 1 { return nil }
+        if let weekStart = parts.removeValue(forKey: "WKST"), !["MO", "TU", "WE", "TH", "FR", "SA", "SU"].contains(weekStart) { return nil }
+        guard parts.isEmpty else { return nil }
+        return frequency == "DAILY" ? .daily : .weekly
     }
 }

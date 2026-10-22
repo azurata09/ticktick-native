@@ -148,6 +148,7 @@ actor TickTickAPI {
         let original = try record.task()
         let current = try await self.record(projectID: original.projectId, taskID: original.id, token: token)
         guard current == record else { throw TickTickError.conflict }
+        if current.confirms(changes) { return current }
         let body = try current.updating(changes)
         var request = URLRequest(url: URL(string: "https://api.ticktick.com/open/v1/task/\(original.id)")!)
         request.httpMethod = "POST"
