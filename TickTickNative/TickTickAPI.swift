@@ -1,6 +1,7 @@
 import Foundation
 
 nonisolated enum TickTickError: LocalizedError {
+    case updateMismatch([String])
     case updateUncertain
     case conflict
     case unsupportedFloatingTime
@@ -22,6 +23,7 @@ nonisolated enum TickTickError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .updateMismatch(let names): "変更を送信しましたが、再取得した値を照合できません（属性名：" + names.sorted().joined(separator: ", ") + "）。保存済みの可能性があります。再送せず状態を読み直してください。"
         case .updateUncertain: "保存結果を確認できませんでした。入力を保持しています。タスクを読み直して結果を確認してください。"
         case .conflict: "別の場所でタスクが変更されました。読み直して変更内容を確認してください。"
         case .unsupportedFloatingTime: "フローティング時刻の保持方法を公開API仕様で確認できないため、変更を停止しました。通常の日時を持つタスクで検証してください。"
@@ -155,7 +157,9 @@ actor TickTickAPI {
         var failure: Error?
         do { _ = try await perform(request) } catch { failure = error }
         let confirmed = try await self.record(projectID: original.projectId, taskID: original.id, token: token)
-        guard confirmed.confirms(changes), confirmed.preservesUnchangedFields(from: current, changes: changes) else { throw failure ?? TickTickError.updateUncertain }
+        let mismatches = changes.compactMap { key, value in confirmed.confirms([key: value]) ? nil : key }
+            + confirmed.changedUnrequestedFields(from: current, changes: changes)
+        guard mismatches.isEmpty else { throw failure ?? TickTickError.updateMismatch(Array(Set(mismatches))) }
         return confirmed
     }
 

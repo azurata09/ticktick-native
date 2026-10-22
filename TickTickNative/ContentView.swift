@@ -341,6 +341,24 @@ private struct RecurrenceView: View {
                 Text("開始と終了を同じ日時に設定します。次回予定はTickTickで生成されます。")
                     .font(.caption).foregroundStyle(.secondary)
             } else if error == nil { ProgressView() }
+            Button("保存せずサーバーの状態を確認") {
+                guard let record else { return }
+                Task {
+                    do {
+                        let current = try await store.record(for: item)
+                        let formatter = ISO8601DateFormatter()
+                        formatter.timeZone = .current
+                        let raw = formatter.string(from: allDay ? Calendar.current.startOfDay(for: date) : date)
+                        let changes: [String: JSONValue] = ["startDate": .string(raw), "dueDate": .string(raw), "isAllDay": .bool(allDay),
+                            "timeZone": .string(TimeZone.current.identifier), "repeatFlag": .string(recurrence.rule)]
+                        let mismatches = changes.compactMap { key, value in current.confirms([key: value]) ? nil : key }.sorted()
+                        let other = current.changedUnrequestedFields(from: record, changes: changes)
+                        error = "送信なしの確認。設定と不一致：" + (mismatches.isEmpty ? "なし" : mismatches.joined(separator: ", "))
+                            + "。他の変化：" + (other.isEmpty ? "なし" : other.joined(separator: ", "))
+                            + "。現在の繰り返し：" + (current.fields["repeatFlag"]?.string ?? "なし")
+                    } catch { self.error = error.localizedDescription }
+                }
+            }.disabled(record == nil || store.isSavingTask)
             HStack {
                 Button("キャンセル") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()

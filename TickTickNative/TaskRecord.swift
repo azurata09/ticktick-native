@@ -58,10 +58,14 @@ nonisolated struct TaskRecord: Codable, Equatable, Sendable {
         }
     }
 
-    func preservesUnchangedFields(from original: TaskRecord, changes: [String: JSONValue]) -> Bool {
+    func changedUnrequestedFields(from original: TaskRecord, changes: [String: JSONValue]) -> [String] {
         let metadata: Set<String> = ["etag", "etimestamp", "modifiedTime", "completedTime", "focusSummaries"]
         let unchanged = original.fields.filter { !changes.keys.contains($0.key) && !metadata.contains($0.key) }
-        return confirms(unchanged)
+        return unchanged.compactMap { key, value in confirms([key: value]) ? nil : key }.sorted()
+    }
+
+    func preservesUnchangedFields(from original: TaskRecord, changes: [String: JSONValue]) -> Bool {
+        changedUnrequestedFields(from: original, changes: changes).isEmpty
     }
 
     func updating(_ changes: [String: JSONValue]) throws -> [String: JSONValue] {
