@@ -14,6 +14,7 @@ final class TodayStore {
     var creationRecordError = false
     var canWrite: Bool { self.isDemo || self.connection?.canWrite == true }
     var writableProjects: [TickProject] { snapshot.projects.filter { $0.isWritable && $0.kind != "NOTE" } }
+    var week: [DayTasks] = []
     var today: [ListedTask] = []
     var overdue: [ListedTask] = []
     var warnings: [String] = []
@@ -373,6 +374,7 @@ final class TodayStore {
         snapshot = TaskSnapshot()
         operationMessage = nil
         today = []
+        week = []
         overdue = []
         warnings = []
         updatedAt = nil
@@ -404,12 +406,13 @@ final class TodayStore {
             if invalidCount > 0 {
                 warnings.append("日時を解釈できないタスクが\(invalidCount)件あります。一覧には含めていません。")
             }
-            return (today, overdue, warnings)
+            return (today, overdue, warnings, WeekSchedule.groups(tasks: snapshot.tasks, now: now, calendar: calendar))
         }.value
         guard generation == current, groupingID == id else { return }
         today = groups.0
         overdue = groups.1
         warnings = groups.2
+        week = groups.3
     }
 
     private func message(for error: Error) -> String {

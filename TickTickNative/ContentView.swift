@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var store = TodayStore(isDemo: ProcessInfo.processInfo.arguments.contains("--demo") || ProcessInfo.processInfo.environment["TICKTICK_TESTING"] == "1")
+    @State private var showsWeek = false
     @State private var showsConnection = false
     @State private var showsCreate = false
     @State private var confirmsResolution = false
@@ -11,11 +12,17 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("今日").font(.largeTitle.bold())
+                    Text(showsWeek ? "7日間" : "今日").font(.largeTitle.bold())
                     Text(Date.now, format: .dateTime.year().month().day().weekday())
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if store.isConnected || store.isDemo {
+                    Picker("表示", selection: $showsWeek) {
+                        Text("今日").tag(false)
+                        Text("7日間").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 180)
+                }
                 if store.isLoading { ProgressView().controlSize(.small) }
                 if store.isDemo {
                     Text("サンプル表示").foregroundStyle(.secondary)
@@ -98,6 +105,15 @@ struct ContentView: View {
         if store.isLoading && store.updatedAt == nil {
             VStack { Spacer(); ProgressView("予定を取得しています…"); Spacer() }
                 .frame(maxWidth: .infinity)
+        } else if showsWeek && store.updatedAt != nil {
+            List {
+                ForEach(store.week) { day in
+                    Section(day.date.formatted(.dateTime.month().day().weekday()) + " · \(day.tasks.count)件") {
+                        ForEach(day.tasks) { TaskRow(item: $0, overdue: false, store: store) }
+                        if day.tasks.isEmpty { Text("予定はありません").foregroundStyle(.secondary) }
+                    }
+                }
+            }.listStyle(.inset)
         } else if store.today.isEmpty && store.overdue.isEmpty {
             ContentUnavailableView {
                 Label(store.updatedAt == nil ? "予定を取得できませんでした" : "表示できるタスクはありません", systemImage: "calendar")
@@ -122,6 +138,7 @@ struct ContentView: View {
 
     private var coverage: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if showsWeek { Text("期間のある予定は、7日間のうち最初に重なる日に1回表示します。期限切れは「今日」で確認できます。") }
             if store.isDemo {
                 Text("サンプルデータです。APIへの接続やKeychainへの保存は行いません。")
             } else {
@@ -165,6 +182,11 @@ private struct TaskRow: View {
                 Text(item.task.title).textSelection(.enabled)
                 HStack {
                     Text(item.projectName)
+                    if let raw = item.task.startDate, raw != item.task.dueDate,
+                       let start = TaskSchedule(calendar: .current).date(raw, allDay: item.task.isAllDay == true) {
+                        Text(start, format: item.task.isAllDay == true ? .dateTime.month().day() : .dateTime.month().day().hour().minute())
+                        Text("〜")
+                    }
                     if let raw = item.task.dueDate ?? item.task.startDate,
                        let date = TaskSchedule(calendar: .current).date(raw, allDay: item.task.isAllDay == true) {
                         Text(date, format: item.task.isAllDay == true
