@@ -4,6 +4,7 @@ import Observation
 @MainActor
 @Observable
 final class TodayStore {
+    var operationMessage: String?
     var reminderMessage: String?
     private var reminders: MacReminders?
     var isSavingTask = false
@@ -135,6 +136,7 @@ final class TodayStore {
         }
         isSavingTask = true
         errorMessage = nil
+        operationMessage = nil
         defer { isSavingTask = false }
         do {
             var confirmed = item.task
@@ -148,6 +150,11 @@ final class TodayStore {
                 confirmed = try await api.complete(projectID: item.task.projectId, taskID: item.task.id, token: connection.accessToken, expected: item.task)
                 try clearCompletion(taskID: item.task.id, projectID: item.task.projectId)
             } else { return false }
+            if item.task.repeatFlag?.isEmpty == false,
+               let raw = confirmed.dueDate,
+               let date = TaskSchedule(calendar: .current).date(raw, allDay: confirmed.isAllDay == true) {
+                operationMessage = "完了を確認しました。次回予定：" + date.formatted(date: .abbreviated, time: confirmed.isAllDay == true ? .omitted : .shortened)
+            }
             if let index = snapshot.tasks.firstIndex(where: { $0.id == item.id }) {
                 snapshot.tasks[index] = ListedTask(task: confirmed, projectName: item.projectName)
             }

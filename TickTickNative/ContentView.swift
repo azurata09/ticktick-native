@@ -31,6 +31,9 @@ struct ContentView: View {
                     .padding(.horizontal, 24).padding(.bottom, 12)
             }
 
+            if let message = store.operationMessage {
+                Text(message).foregroundStyle(.secondary).padding(.horizontal, 24)
+            }
             if let reminderMessage = store.reminderMessage {
                 Text(reminderMessage).foregroundStyle(.orange).padding(.horizontal, 24)
             }
