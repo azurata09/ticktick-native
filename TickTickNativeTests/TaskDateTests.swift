@@ -3,6 +3,19 @@ import Testing
 @testable import TickTickNative
 
 struct TaskDateTests {
+    @Test func allDayWireFormatKeepsCalendarDateWhenServerNormalizesUTC() throws {
+        for zone in ["Asia/Tokyo", "America/Los_Angeles", "Pacific/Kiritimati", "Pacific/Honolulu"] {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: zone)!
+            let selected = calendar.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 19))!
+            let wire = TaskSchedule.wireDate(selected, allDay: true, calendar: calendar)
+            #expect(wire == "2026-10-23T00:00:00+0000")
+            let server = ISO8601DateFormatter().string(from: try #require(ISO8601DateFormatter().date(from: wire)))
+            let restored = try #require(TaskSchedule(calendar: calendar).date(server, allDay: true))
+            #expect(restored == calendar.startOfDay(for: selected))
+        }
+    }
+
     private var calendar: Calendar {
         var value = Calendar(identifier: .gregorian)
         value.timeZone = TimeZone(identifier: "Asia/Tokyo")!

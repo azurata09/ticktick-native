@@ -139,9 +139,7 @@ actor TickTickAPI {
     func create(title: String, projectID: String, date: Date, token: String) async throws -> TickTask {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, !projectID.isEmpty else { throw TickTickError.invalidInput }
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = .current
-        let rawDate = formatter.string(from: Calendar.current.startOfDay(for: date))
+        let rawDate = TaskSchedule.wireDate(date, allDay: true)
         let body: [String: Any] = ["title": title, "projectId": projectID, "isAllDay": true,
                                     "startDate": rawDate, "dueDate": rawDate,
                                     "timeZone": TimeZone.current.identifier]

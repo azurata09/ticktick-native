@@ -277,9 +277,7 @@ final class TodayStore {
     }
 
     func saveRecurrence(record: TaskRecord, date: Date, allDay: Bool, recurrence: SimpleRecurrence) async -> Bool {
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = .current
-        let value = formatter.string(from: allDay ? Calendar.current.startOfDay(for: date) : date)
+        let value = TaskSchedule.wireDate(date, allDay: allDay)
         return await saveTask(record: record, changes: ["startDate": .string(value), "dueDate": .string(value),
             "isAllDay": .bool(allDay), "timeZone": .string(TimeZone.current.identifier), "repeatFlag": .string(recurrence.rule)])
     }

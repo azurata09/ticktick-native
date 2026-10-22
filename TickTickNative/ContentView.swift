@@ -349,9 +349,7 @@ private struct RecurrenceView: View {
                 Task {
                     do {
                         let current = try await store.record(for: item)
-                        let formatter = ISO8601DateFormatter()
-                        formatter.timeZone = .current
-                        let raw = formatter.string(from: allDay ? Calendar.current.startOfDay(for: date) : date)
+                        let raw = TaskSchedule.wireDate(date, allDay: allDay)
                         let changes: [String: JSONValue] = ["startDate": .string(raw), "dueDate": .string(raw), "isAllDay": .bool(allDay),
                             "timeZone": .string(TimeZone.current.identifier), "repeatFlag": .string(recurrence.rule)]
                         let mismatches = changes.compactMap { key, value in current.confirms([key: value]) ? nil : key }.sorted()

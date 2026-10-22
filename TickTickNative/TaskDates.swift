@@ -31,9 +31,8 @@ nonisolated struct TaskDates {
         let start = allDay ? calendar.startOfDay(for: start) : start
         let end = allDay ? calendar.startOfDay(for: end) : end
         guard end >= start else { throw TaskDateError.reversed }
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = calendar.timeZone
-        return ["startDate": .string(formatter.string(from: start)), "dueDate": .string(formatter.string(from: end)),
+        return ["startDate": .string(TaskSchedule.wireDate(start, allDay: allDay, calendar: calendar)),
+                "dueDate": .string(TaskSchedule.wireDate(end, allDay: allDay, calendar: calendar)),
                 "isAllDay": .bool(allDay), "timeZone": .string(calendar.timeZone.identifier)]
     }
 }

@@ -42,6 +42,16 @@ nonisolated enum DayBucket: Equatable {
 }
 
 nonisolated struct TaskSchedule {
+    static func wireDate(_ date: Date, allDay: Bool, calendar: Calendar = .current) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = calendar.timeZone
+        if allDay {
+            formatter.formatOptions = [.withFullDate]
+            return formatter.string(from: date) + "T00:00:00+0000"
+        }
+        return formatter.string(from: date)
+    }
+
     private let calendar: Calendar
     private let standard = ISO8601DateFormatter()
     private let fractional = ISO8601DateFormatter()
