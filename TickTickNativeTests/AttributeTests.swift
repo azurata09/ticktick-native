@@ -3,6 +3,13 @@ import Testing
 @testable import TickTickNative
 
 extension APITests {
+    @Test func omittedEmptyOptionalFieldsDoNotMeanDataWasLost() {
+        let returned = TaskRecord(fields: ["id": .string("t"), "projectId": .string("p"), "title": .string("sample")])
+        #expect(returned.confirms(["content": .string(""), "desc": .string(""), "tags": .array([]), "items": .array([]), "parentId": .string("")]))
+        #expect(!returned.confirms(["content": .string("text")]))
+        #expect(!returned.confirms(["tags": .array([.string("work")])]))
+    }
+
     @Test func responseMetadataIsNotSentAndFloatingFalseIsPreserved() async throws {
         var fields: [String: JSONValue] = ["id": .string("t"), "projectId": .string("p"), "title": .string("sample"),
             "createdTime": .string("2026-10-20T00:00:00Z"), "isFloating": .bool(false), "modifiedTime": .string("2026-10-23T00:00:00Z"), "etimestamp": .integer(123), "etag": .string("before")]

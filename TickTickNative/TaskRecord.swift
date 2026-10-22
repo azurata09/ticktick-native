@@ -48,6 +48,13 @@ nonisolated struct TaskRecord: Codable, Equatable, Sendable {
 
     func confirms(_ changes: [String: JSONValue]) -> Bool {
         changes.allSatisfy { key, expected in
+            let actual = fields[key]
+            let optionalText: Set<String> = ["content", "desc", "repeatFlag", "parentId"]
+            let optionalLists: Set<String> = ["tags", "reminders", "items"]
+            if actual == nil || actual == .null {
+                if optionalText.contains(key), expected == .string("") { return true }
+                if optionalLists.contains(key), expected == .array([]) { return true }
+            }
             if expected == .null { return fields[key] == nil || fields[key] == .null }
             if key == "startDate" || key == "dueDate", let before = expected.string, let after = fields[key]?.string {
                 let schedule = TaskSchedule(calendar: .current)
