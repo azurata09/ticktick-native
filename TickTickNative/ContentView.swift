@@ -1,7 +1,7 @@
 import SwiftUI
 
 private enum TaskScope: Hashable {
-    case today, week, project(String)
+    case today, week, completed, project(String)
     var projectID: String? { if case .project(let id) = self { id } else { nil } }
 }
 
@@ -17,7 +17,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(scope == .week ? "7日間" : (store.projects.first { $0.id == scope.projectID }?.name ?? "今日")).font(.largeTitle.bold())
+                    Text(scope == .completed ? "完了履歴" : (scope == .week ? "7日間" : (store.projects.first { $0.id == scope.projectID }?.name ?? "今日"))).font(.largeTitle.bold())
                     Text(Date.now, format: .dateTime.year().month().day().weekday())
                         .foregroundStyle(.secondary)
                 }
@@ -26,6 +26,7 @@ struct ContentView: View {
                     Picker("表示", selection: $scope) {
                         Text("今日").tag(TaskScope.today)
                         Text("7日間").tag(TaskScope.week)
+                        Text("完了履歴").tag(TaskScope.completed)
                         Divider()
                         ForEach(store.projects, id: \.id) { Text($0.name).tag(TaskScope.project($0.id)) }
                     }.frame(width: 200)
@@ -112,6 +113,8 @@ struct ContentView: View {
         if store.isLoading && store.updatedAt == nil {
             VStack { Spacer(); ProgressView("予定を取得しています…"); Spacer() }
                 .frame(maxWidth: .infinity)
+        } else if scope == .completed {
+            CompletedTasksView(store: store).id(store.sessionID)
         } else if let projectID = scope.projectID {
             if store.projects.contains(where: { $0.id == projectID }) {
                 List {

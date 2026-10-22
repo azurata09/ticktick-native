@@ -33,6 +33,7 @@ final class TodayStore {
     private let creationJournal: CreationJournal
     private let api: TickTickAPI
     private let browser = OAuthBrowser()
+    var sessionID: UUID { generation }
     var savedClientID: String { connection?.clientID ?? "" }
     var savedClientSecret: String { connection?.clientSecret ?? "" }
 
@@ -219,6 +220,15 @@ final class TodayStore {
         guard let reminders else { return }
         do { reminderMessage = try await reminders.synchronize(snapshot: snapshot) }
         catch { reminderMessage = error.localizedDescription }
+    }
+
+    func completed(from start: Date, through end: Date) async throws -> [TaskRecord] {
+        if isDemo { return [] }
+        guard let connection else { throw TickTickError.unauthorized }
+        let current = generation
+        let records = try await api.completed(from: start, through: end, token: connection.accessToken)
+        guard generation == current else { throw CancellationError() }
+        return records
     }
 
     func record(for item: ListedTask) async throws -> TaskRecord {

@@ -115,6 +115,27 @@ actor TickTickAPI {
         return result
     }
 
+    func completed(from start: Date, through end: Date, token: String, calendar: Calendar = .current) async throws -> [TaskRecord] {
+        let first = calendar.startOfDay(for: start)
+        guard let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: end)), nextDay > first else { throw TaskDateError.reversed }
+        let last = nextDay.addingTimeInterval(-0.001)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var request = URLRequest(url: URL(string: "https://api.ticktick.com/open/v1/task/completed")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["startDate": formatter.string(from: first), "endDate": formatter.string(from: last)])
+        let records: [TaskRecord] = try await send(request)
+        guard records.count <= 200 else { throw TickTickError.invalidResponse }
+        let schedule = TaskSchedule(calendar: calendar)
+        for record in records {
+            guard record.fields["status"] == .integer(2), let raw = record.fields["completedTime"]?.string,
+                  let date = schedule.date(raw, allDay: false), date >= first, date <= last else { throw TickTickError.invalidResponse }
+        }
+        return records
+    }
+
     func create(title: String, projectID: String, date: Date, token: String) async throws -> TickTask {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, !projectID.isEmpty else { throw TickTickError.invalidInput }
