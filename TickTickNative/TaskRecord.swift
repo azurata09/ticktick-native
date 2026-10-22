@@ -62,8 +62,9 @@ nonisolated struct TaskRecord: Codable, Equatable, Sendable {
         let writable: Set<String> = ["id", "projectId", "title", "content", "desc", "isAllDay", "startDate", "dueDate",
                                      "timeZone", "reminders", "tags", "repeatFlag", "repeatFrom", "priority", "sortOrder", "items"]
         let readOnly: Set<String> = ["status", "completedTime", "kind", "etag", "focusSummaries", "parentId", "assigneeUsername"]
-        guard Set(fields.keys).isSubset(of: writable.union(readOnly)),
-              Set(changes.keys).isSubset(of: writable.subtracting(["id", "projectId"])),
+        let unknown = Set(fields.keys).subtracting(writable.union(readOnly))
+        guard unknown.isEmpty else { throw TickTickError.unsupportedTaskAttributes(Array(unknown)) }
+        guard Set(changes.keys).isSubset(of: writable.subtracting(["id", "projectId"])),
               fields["parentId"]?.string?.isEmpty != false else { throw TickTickError.unsupportedFields }
         var body = fields.filter { writable.contains($0.key) }
         body.merge(changes) { _, new in new }
