@@ -130,3 +130,13 @@ TickTick側で保存先を確認した後、画面の「確認後に追加記録
 権限拒否、配信、終了中・スリープ中の実機確認は未実施です。
 
 参考：[Appleのローカル通知の予約](https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/SchedulingandHandlingLocalNotifications.html)。
+
+## 編集時の属性保持
+
+公式のタスク更新パラメーターにある項目を送信し、保存前の比較と保存後の再取得で変更内容を照合します。
+応答には、仕様書のTask表にない `etimestamp`、`modifiedTime`、`isFloating` が含まれることを実機で確認しました。
+前の2属性は更新管理用として扱い、更新本文へ送信せず、保存による変化を許容します。
+`isFloating` は更新パラメーターに保持方法の記載がないため、無効な場合に限って編集し、保存後にも値が変わっていないことを照合します。
+有効な場合や、それ以外の未知の属性がある場合は送信を停止します。
+この扱いには公開仕様外の応答に関する推定が含まれます。
+条件付き更新は公開仕様にないため、比較直後に他の端末が更新した場合の競合を完全には防げません。

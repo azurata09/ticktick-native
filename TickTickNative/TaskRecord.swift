@@ -58,12 +58,22 @@ nonisolated struct TaskRecord: Codable, Equatable, Sendable {
         }
     }
 
+    func preservesUnchangedFields(from original: TaskRecord, changes: [String: JSONValue]) -> Bool {
+        let metadata: Set<String> = ["etag", "etimestamp", "modifiedTime", "completedTime", "focusSummaries"]
+        let unchanged = original.fields.filter { !changes.keys.contains($0.key) && !metadata.contains($0.key) }
+        return confirms(unchanged)
+    }
+
     func updating(_ changes: [String: JSONValue]) throws -> [String: JSONValue] {
         let writable: Set<String> = ["id", "projectId", "title", "content", "desc", "isAllDay", "startDate", "dueDate",
                                      "timeZone", "reminders", "tags", "repeatFlag", "repeatFrom", "priority", "sortOrder", "items"]
-        let readOnly: Set<String> = ["status", "completedTime", "kind", "etag", "focusSummaries", "parentId", "assigneeUsername"]
+        let readOnly: Set<String> = ["status", "completedTime", "kind", "etag", "focusSummaries", "parentId", "assigneeUsername", "etimestamp", "modifiedTime", "isFloating"]
         let unknown = Set(fields.keys).subtracting(writable.union(readOnly))
         guard unknown.isEmpty else { throw TickTickError.unsupportedTaskAttributes(Array(unknown)) }
+        // isFloating は公開更新パラメータにない。無効な場合のみ編集し、再取得でも保持を照合する。
+        if let floating = fields["isFloating"], floating != .null, floating != .bool(false) {
+            throw TickTickError.unsupportedFloatingTime
+        }
         guard Set(changes.keys).isSubset(of: writable.subtracting(["id", "projectId"])),
               fields["parentId"]?.string?.isEmpty != false else { throw TickTickError.unsupportedFields }
         var body = fields.filter { writable.contains($0.key) }

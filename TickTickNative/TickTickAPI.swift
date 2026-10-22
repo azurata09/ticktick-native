@@ -3,6 +3,7 @@ import Foundation
 nonisolated enum TickTickError: LocalizedError {
     case updateUncertain
     case conflict
+    case unsupportedFloatingTime
     case unsupportedTaskAttributes([String])
     case unsupportedFields
     case recurringNotSupported
@@ -23,6 +24,7 @@ nonisolated enum TickTickError: LocalizedError {
         switch self {
         case .updateUncertain: "保存結果を確認できませんでした。入力を保持しています。タスクを読み直して結果を確認してください。"
         case .conflict: "別の場所でタスクが変更されました。読み直して変更内容を確認してください。"
+        case .unsupportedFloatingTime: "フローティング時刻の保持方法を公開API仕様で確認できないため、変更を停止しました。通常の日時を持つタスクで検証してください。"
         case .unsupportedTaskAttributes(let names): "未対応の属性があるため送信を停止しました（属性名のみ）：" + names.sorted().joined(separator: ", ")
         case .unsupportedFields: "このタスクには未対応の情報があるため、安全に変更できません。元の内容は変更していません。"
         case .recurringNotSupported: "繰り返しタスクの完了は、繰り返し対応後に利用できます。"
@@ -153,7 +155,7 @@ actor TickTickAPI {
         var failure: Error?
         do { _ = try await perform(request) } catch { failure = error }
         let confirmed = try await self.record(projectID: original.projectId, taskID: original.id, token: token)
-        guard confirmed.confirms(changes) else { throw failure ?? TickTickError.updateUncertain }
+        guard confirmed.confirms(changes), confirmed.preservesUnchangedFields(from: current, changes: changes) else { throw failure ?? TickTickError.updateUncertain }
         return confirmed
     }
 
