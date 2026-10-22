@@ -31,6 +31,9 @@ struct ContentView: View {
                     .padding(.horizontal, 24).padding(.bottom, 12)
             }
 
+            if let reminderMessage = store.reminderMessage {
+                Text(reminderMessage).foregroundStyle(.orange).padding(.horizontal, 24)
+            }
             if store.pendingCreation != nil || store.creationRecordError {
                 VStack(alignment: .leading) {
                     Text("結果未確認の追加記録があります。TickTickで保存先を確認してください。再送は停止しています。")
@@ -141,6 +144,7 @@ private struct TaskRow: View {
     let overdue: Bool
     @Bindable var store: TodayStore
     @State private var showsRecurrence = false
+    @State private var showsReminder = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -170,9 +174,11 @@ private struct TaskRow: View {
         }
         .padding(.vertical, 8)
         .contextMenu {
+            Button("このMacの通知…") { showsReminder = true }.disabled(store.isDemo)
             Button("繰り返しと開始予定…") { showsRecurrence = true }.disabled(!store.canWrite || store.isDemo)
         }
         .sheet(isPresented: $showsRecurrence) { RecurrenceView(item: item, store: store) }
+        .sheet(isPresented: $showsReminder) { ReminderView(item: item, store: store) }
     }
 }
 
@@ -313,5 +319,39 @@ private struct RecurrenceView: View {
                        let parsed = TaskSchedule(calendar: .current).date(raw, allDay: allDay) { date = parsed }
                 } catch { self.error = error.localizedDescription }
             }
+    }
+}
+
+private struct ReminderView: View {
+    let item: ListedTask
+    @Bindable var store: TodayStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var date = Date.now.addingTimeInterval(300)
+    @State private var saving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("このMacの通知").font(.title2)
+            Text(item.task.title)
+            DatePicker("通知時刻", selection: $date, displayedComponents: [.date, .hourAndMinute])
+            Text("このMacだけの設定です。TickTickのリマインダーは変更しません。公式アプリの通知も有効な場合、両方から通知されます。繰り返しでは開始予定からの時間差を引き継ぎます。")
+                .font(.callout).foregroundStyle(.secondary)
+            Text("予約済みの通知はアプリ終了中もOSが配信します。スリープ中の即時配信や、終了中の他端末の変更反映は保証されません。")
+                .font(.caption).foregroundStyle(.secondary)
+            if let message = store.reminderMessage { Text(message).foregroundStyle(.red) }
+            HStack {
+                Button("通知を解除") { save(nil) }
+                Spacer()
+                Button("キャンセル") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("設定") { save(date) }.keyboardShortcut(.defaultAction)
+            }.disabled(saving)
+        }.padding(24).frame(width: 480).interactiveDismissDisabled(saving)
+    }
+    private func save(_ date: Date?) {
+        saving = true
+        Task {
+            if await store.setReminder(for: item, date: date) { dismiss() }
+            saving = false
+        }
     }
 }

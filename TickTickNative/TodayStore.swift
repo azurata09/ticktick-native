@@ -4,6 +4,8 @@ import Observation
 @MainActor
 @Observable
 final class TodayStore {
+    var reminderMessage: String?
+    private var reminders: MacReminders?
     var isSavingTask = false
     var pendingCompletions: [CompletionReceipt] = []
     var completionRecordError = false
@@ -44,6 +46,7 @@ final class TodayStore {
         self.creationJournal = creationJournal
         self.completionJournal = completionJournal
         self.isConnected = initialConnection != nil
+        if !isDemo && initialConnection == nil && ProcessInfo.processInfo.environment["TICKTICK_TESTING"] != "1" { reminders = MacReminders() }
     }
 
     func restore() async {
@@ -110,6 +113,7 @@ final class TodayStore {
             updatedAt = .now
             needsAuthorization = false
             try await reconcileCompletions()
+            await syncReminders()
             await regroup()
         } catch {
             guard generation == current else { return }
@@ -147,6 +151,7 @@ final class TodayStore {
             if let index = snapshot.tasks.firstIndex(where: { $0.id == item.id }) {
                 snapshot.tasks[index] = ListedTask(task: confirmed, projectName: item.projectName)
             }
+            await syncReminders()
             await regroup()
             if !isDemo { await refresh() }
             return true
@@ -183,6 +188,23 @@ final class TodayStore {
                 try clearCompletion(taskID: receipt.taskID, projectID: receipt.projectID)
             }
         }
+    }
+
+    func setReminder(for item: ListedTask, date: Date?) async -> Bool {
+        guard let reminders, !isSavingTask, !isLoading, isConnected else { return false }
+        isSavingTask = true
+        defer { isSavingTask = false }
+        do {
+            try await reminders.set(task: item.task, date: date)
+            await syncReminders()
+            return reminderMessage == nil
+        } catch { reminderMessage = error.localizedDescription; return false }
+    }
+
+    private func syncReminders() async {
+        guard let reminders else { return }
+        do { reminderMessage = try await reminders.synchronize(snapshot: snapshot) }
+        catch { reminderMessage = error.localizedDescription }
     }
 
     func record(for item: ListedTask) async throws -> TaskRecord {
@@ -287,6 +309,8 @@ final class TodayStore {
             errorMessage = "追加処理または未確認の追加記録が残っています。保存結果を確認してから接続を解除してください。"
             return
         }
+        do { try reminders?.clear(); reminderMessage = nil }
+        catch { errorMessage = "通知設定を消せませんでした。接続解除を停止しました。"; return }
         generation = UUID()
         refreshTask?.cancel()
         refreshTask = nil
