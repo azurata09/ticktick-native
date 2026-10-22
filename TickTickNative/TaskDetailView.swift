@@ -7,6 +7,7 @@ struct TaskDetailView: View {
     @State private var record: TaskRecord?
     @State private var error: String?
     @State private var showsEditor = false
+    @State private var showsDates = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -40,12 +41,16 @@ struct TaskDetailView: View {
             } else { ProgressView("詳細を取得しています…").frame(maxWidth: .infinity) }
             HStack {
                 Button("内容を編集…") { showsEditor = true }.disabled(record == nil || !store.canWrite || store.isSavingTask)
+                Button("予定日時…") { showsDates = true }.disabled(record == nil || !store.canWrite || store.isSavingTask)
                 Spacer()
                 Button("閉じる") { dismiss() }.keyboardShortcut(.cancelAction)
             }
         }.padding(24).frame(width: 600, height: 560).task { await load() }
             .sheet(isPresented: $showsEditor, onDismiss: { Task { await load() } }) {
                 if let record { TaskTextEditor(record: record, store: store) }
+            }
+            .sheet(isPresented: $showsDates, onDismiss: { Task { await load() } }) {
+                if let record { TaskDateEditor(record: record, store: store) }
             }
     }
 
