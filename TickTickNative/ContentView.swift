@@ -92,11 +92,11 @@ struct ContentView: View {
             List {
                 if !store.overdue.isEmpty {
                     Section("期限切れ · \(store.overdue.count)件") {
-                        ForEach(store.overdue) { TaskRow(item: $0, overdue: true) }
+                        ForEach(store.overdue) { TaskRow(item: $0, overdue: true, store: store) }
                     }
                 }
                 Section("今日の予定 · \(store.today.count)件") {
-                    ForEach(store.today) { TaskRow(item: $0, overdue: false) }
+                    ForEach(store.today) { TaskRow(item: $0, overdue: false, store: store) }
                     if store.today.isEmpty { Text("今日の予定はありません").foregroundStyle(.secondary) }
                 }
             }
@@ -129,12 +129,19 @@ struct ContentView: View {
 private struct TaskRow: View {
     let item: ListedTask
     let overdue: Bool
+    @Bindable var store: TodayStore
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: overdue ? "clock.badge.exclamationmark" : "circle")
-                .foregroundStyle(overdue ? Color.orange : Color.secondary)
-                .accessibilityHidden(true)
+            Button {
+                Task { _ = await store.completeTask(item) }
+            } label: {
+                Image(systemName: "circle").foregroundStyle(overdue ? Color.orange : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("完了にする：" + item.task.title)
+            .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.needsAuthorization || item.task.repeatFlag?.isEmpty == false)
+            .help(item.task.repeatFlag?.isEmpty == false ? "繰り返しタスクは後続の対応で完了できます" : "タスクを完了にする")
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.task.title).textSelection(.enabled)
                 HStack {

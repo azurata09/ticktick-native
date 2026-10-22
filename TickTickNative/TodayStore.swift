@@ -111,6 +111,34 @@ final class TodayStore {
         }
     }
 
+    func completeTask(_ item: ListedTask) async -> Bool {
+        guard canWrite, !isSavingTask, !isAuthorizing, !isLoading, !needsAuthorization else { return false }
+        guard item.task.repeatFlag?.isEmpty != false else {
+            errorMessage = TickTickError.recurringNotSupported.localizedDescription
+            return false
+        }
+        isSavingTask = true
+        errorMessage = nil
+        defer { isSavingTask = false }
+        do {
+            var confirmed = item.task
+            if isDemo { confirmed.status = 2 }
+            else if let connection {
+                confirmed = try await api.complete(projectID: item.task.projectId, taskID: item.task.id, token: connection.accessToken)
+            } else { return false }
+            if let index = snapshot.tasks.firstIndex(where: { $0.id == item.id }) {
+                snapshot.tasks[index] = ListedTask(task: confirmed, projectName: item.projectName)
+            }
+            await regroup()
+            if !isDemo { await refresh() }
+            return true
+        } catch {
+            if case TickTickError.unauthorized = error { needsAuthorization = true }
+            errorMessage = message(for: error)
+            return false
+        }
+    }
+
     func createTask(title: String, projectID: String) async -> Bool {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, !projectID.isEmpty else { errorMessage = TickTickError.invalidInput.localizedDescription; return false }

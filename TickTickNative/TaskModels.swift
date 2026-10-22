@@ -16,6 +16,7 @@ nonisolated struct TickTask: Decodable, Sendable {
     var isAllDay: Bool? = nil
     var startDate: String? = nil
     var dueDate: String? = nil
+    var repeatFlag: String? = nil
 }
 
 nonisolated struct ProjectData: Decodable, Sendable {

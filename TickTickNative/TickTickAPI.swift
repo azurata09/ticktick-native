@@ -1,6 +1,8 @@
 import Foundation
 
 nonisolated enum TickTickError: LocalizedError {
+    case recurringNotSupported
+    case completionUncertain
     case invalidInput
     case creationUncertain
     case unauthorized
@@ -15,6 +17,8 @@ nonisolated enum TickTickError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .recurringNotSupported: "繰り返しタスクの完了は、繰り返し対応後に利用できます。"
+        case .completionUncertain: "完了状態を確認できませんでした。更新して状態を確認してください。自動再送はしません。"
         case .invalidInput: "タイトルと保存先リストを指定してください。"
         case .creationUncertain: "追加の結果を確認できません。二重登録を防ぐため、保存先を確認するまで再送しません。"
         case .unauthorized: "認証が失効したか、権限がありません。接続し直してください。"
@@ -122,6 +126,21 @@ actor TickTickAPI {
         try await get("project/\(projectID)/task/\(taskID)", token: token)
     }
 
+    func complete(projectID: String, taskID: String, token: String) async throws -> TickTask {
+        let current = try await task(projectID: projectID, taskID: taskID, token: token)
+        if current.status == 2 { return current }
+        guard current.repeatFlag?.isEmpty != false else { throw TickTickError.recurringNotSupported }
+        var request = URLRequest(url: URL(string: "https://api.ticktick.com/open/v1/project/\(projectID)/task/\(taskID)/complete")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var failure: Error?
+        do { _ = try await perform(request) }
+        catch { failure = error }
+        let confirmed = try await task(projectID: projectID, taskID: taskID, token: token)
+        guard confirmed.status == 2 else { throw failure ?? TickTickError.completionUncertain }
+        return confirmed
+    }
+
     private func get<T: Decodable>(_ path: String, token: String, query: [URLQueryItem] = []) async throws -> T {
         var url = URLComponents(string: "https://api.ticktick.com/open/v1/\(path)")!
         if !query.isEmpty { url.queryItems = query }
@@ -130,7 +149,13 @@ actor TickTickAPI {
         return try await send(request)
     }
 
-    private func send<T: Decodable>(_ input: URLRequest) async throws -> T {
+    private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
+        let data = try await perform(request)
+        do { return try JSONDecoder().decode(T.self, from: data) }
+        catch { throw TickTickError.invalidResponse }
+    }
+
+    private func perform(_ input: URLRequest) async throws -> Data {
         var request = input
         request.timeoutInterval = 30
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -138,7 +163,6 @@ actor TickTickAPI {
         guard let response = response as? HTTPURLResponse else { throw TickTickError.invalidResponse }
         if response.statusCode == 401 || response.statusCode == 403 { throw TickTickError.unauthorized }
         guard (200..<300).contains(response.statusCode) else { throw TickTickError.http(response.statusCode) }
-        do { return try JSONDecoder().decode(T.self, from: data) }
-        catch { throw TickTickError.invalidResponse }
+        return data
     }
 }
