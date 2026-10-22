@@ -1,8 +1,13 @@
 import SwiftUI
 
+private enum TaskScope: Hashable {
+    case today, week, project(String)
+    var projectID: String? { if case .project(let id) = self { id } else { nil } }
+}
+
 struct ContentView: View {
     @State private var store = TodayStore(isDemo: ProcessInfo.processInfo.arguments.contains("--demo") || ProcessInfo.processInfo.environment["TICKTICK_TESTING"] == "1")
-    @State private var showsWeek = false
+    @State private var scope = TaskScope.today
     @State private var showsConnection = false
     @State private var showsCreate = false
     @State private var confirmsResolution = false
@@ -12,16 +17,18 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(showsWeek ? "7日間" : "今日").font(.largeTitle.bold())
+                    Text(scope == .week ? "7日間" : (store.projects.first { $0.id == scope.projectID }?.name ?? "今日")).font(.largeTitle.bold())
                     Text(Date.now, format: .dateTime.year().month().day().weekday())
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 if store.isConnected || store.isDemo {
-                    Picker("表示", selection: $showsWeek) {
-                        Text("今日").tag(false)
-                        Text("7日間").tag(true)
-                    }.pickerStyle(.segmented).frame(width: 180)
+                    Picker("表示", selection: $scope) {
+                        Text("今日").tag(TaskScope.today)
+                        Text("7日間").tag(TaskScope.week)
+                        Divider()
+                        ForEach(store.projects, id: \.id) { Text($0.name).tag(TaskScope.project($0.id)) }
+                    }.frame(width: 200)
                 }
                 if store.isLoading { ProgressView().controlSize(.small) }
                 if store.isDemo {
@@ -76,7 +83,7 @@ struct ContentView: View {
             if store.isConnected || store.isDemo {
                 Button { showsCreate = true } label: { Label("タスクを追加", systemImage: "plus") }
                     .keyboardShortcut("n")
-                    .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.pendingCreation != nil || store.creationRecordError || store.needsAuthorization)
+                    .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.pendingCreation != nil || store.creationRecordError || store.needsAuthorization || (scope.projectID != nil && !store.writableProjects.contains { $0.id == scope.projectID }))
                 Button { Task { await store.refresh() } } label: {
                     Label("更新", systemImage: "arrow.clockwise")
                 }
@@ -88,7 +95,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showsConnection) { ConnectionView(store: store) }
-        .sheet(isPresented: $showsCreate) { CreateTaskView(store: store) }
+        .sheet(isPresented: $showsCreate) { CreateTaskView(store: store, preferredProjectID: scope.projectID) }
         .confirmationDialog("保存結果をTickTickで確認しましたか？記録の解除はタスクを再送しません。", isPresented: $confirmsResolution) {
             Button("確認済みとして記録を解除") { store.resolvePendingCreation() }
         }
@@ -105,7 +112,14 @@ struct ContentView: View {
         if store.isLoading && store.updatedAt == nil {
             VStack { Spacer(); ProgressView("予定を取得しています…"); Spacer() }
                 .frame(maxWidth: .infinity)
-        } else if showsWeek && store.updatedAt != nil {
+        } else if let projectID = scope.projectID {
+            if store.projects.contains(where: { $0.id == projectID }) {
+                List {
+                    ForEach(store.projectTasks[projectID] ?? []) { TaskRow(item: $0, overdue: false, store: store) }
+                    if store.projectTasks[projectID]?.isEmpty != false { Text("未完了のタスクはありません").foregroundStyle(.secondary) }
+                }.listStyle(.inset)
+            } else { ContentUnavailableView("このリストを取得できませんでした", systemImage: "exclamationmark.triangle") }
+        } else if scope == .week && store.updatedAt != nil {
             List {
                 ForEach(store.week) { day in
                     Section(day.date.formatted(.dateTime.month().day().weekday()) + " · \(day.tasks.count)件") {
@@ -138,7 +152,7 @@ struct ContentView: View {
 
     private var coverage: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if showsWeek { Text("期間のある予定は、7日間のうち最初に重なる日に1回表示します。期限切れは「今日」で確認できます。") }
+            if scope == .week { Text("期間のある予定は、7日間のうち最初に重なる日に1回表示します。期限切れは「今日」で確認できます。") }
             if store.isDemo {
                 Text("サンプルデータです。APIへの接続やKeychainへの保存は行いません。")
             } else {
@@ -176,7 +190,7 @@ private struct TaskRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("完了にする：" + item.task.title)
-            .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.needsAuthorization || SimpleRecurrence.matching(item.task.repeatFlag) == nil || store.completionRecordError || store.pendingCompletions.contains { $0.taskID == item.task.id && $0.projectID == item.task.projectId })
+            .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.needsAuthorization || store.projects.first(where: { $0.id == item.task.projectId })?.isWritable == false || SimpleRecurrence.matching(item.task.repeatFlag) == nil || store.completionRecordError || store.pendingCompletions.contains { $0.taskID == item.task.id && $0.projectID == item.task.projectId })
             .help("タスクを完了にする")
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.task.title).textSelection(.enabled)
@@ -267,6 +281,7 @@ private struct ConnectionView: View {
 
 private struct CreateTaskView: View {
     @Bindable var store: TodayStore
+    let preferredProjectID: String?
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var projectID = ""
@@ -274,11 +289,11 @@ private struct CreateTaskView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("今日やることを追加").font(.title2.bold())
-            TextField("タスクのタイトル", text: $title).textFieldStyle(.roundedBorder)
+            TextField("タスクのタイトル", text: $title).textFieldStyle(.roundedBorder).disabled(store.isSavingTask)
             Picker("保存先", selection: $projectID) {
                 Text("リストを選択").tag("")
                 ForEach(store.writableProjects, id: \.id) { Text($0.name).tag($0.id) }
-            }
+            }.disabled(store.isSavingTask)
             if let error = store.errorMessage { Text(error).foregroundStyle(.red) }
             if store.pendingCreation != nil {
                 Text("保存結果を確認するまで再送できません。画面を閉じ、TickTickで確認してください。")
@@ -294,7 +309,9 @@ private struct CreateTaskView: View {
             }
         }.padding(24).frame(width: 480)
         .interactiveDismissDisabled(store.isSavingTask)
-        .onAppear { projectID = store.writableProjects.first?.id ?? "" }
+        .onAppear {
+            projectID = store.writableProjects.first { $0.id == preferredProjectID }?.id ?? store.writableProjects.first?.id ?? ""
+        }
     }
 }
 

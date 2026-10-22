@@ -14,6 +14,8 @@ final class TodayStore {
     var creationRecordError = false
     var canWrite: Bool { self.isDemo || self.connection?.canWrite == true }
     var writableProjects: [TickProject] { snapshot.projects.filter { $0.isWritable && $0.kind != "NOTE" } }
+    var projects: [TickProject] { snapshot.projects }
+    var projectTasks: [String: [ListedTask]] = [:]
     var week: [DayTasks] = []
     var today: [ListedTask] = []
     var overdue: [ListedTask] = []
@@ -375,6 +377,7 @@ final class TodayStore {
         operationMessage = nil
         today = []
         week = []
+        projectTasks = [:]
         overdue = []
         warnings = []
         updatedAt = nil
@@ -392,8 +395,10 @@ final class TodayStore {
             var warnings = snapshot.warnings
             let schedule = TaskSchedule(calendar: calendar)
             var invalidCount = 0
+            var projectTasks: [String: [ListedTask]] = [:]
             var seen: Set<String> = []
             for item in snapshot.tasks where seen.insert(item.id).inserted {
+                if item.task.status == nil || item.task.status == 0 { projectTasks[item.task.projectId, default: []].append(item) }
                 switch schedule.bucket(item.task, now: now) {
                 case .today: today.append(item)
                 case .overdue: overdue.append(item)
@@ -406,13 +411,20 @@ final class TodayStore {
             if invalidCount > 0 {
                 warnings.append("日時を解釈できないタスクが\(invalidCount)件あります。一覧には含めていません。")
             }
-            return (today, overdue, warnings, WeekSchedule.groups(tasks: snapshot.tasks, now: now, calendar: calendar))
+            for key in projectTasks.keys {
+                projectTasks[key]?.sort {
+                    let comparison = $0.task.title.localizedStandardCompare($1.task.title)
+                    return comparison == .orderedSame ? $0.id < $1.id : comparison == .orderedAscending
+                }
+            }
+            return (today, overdue, warnings, WeekSchedule.groups(tasks: snapshot.tasks, now: now, calendar: calendar), projectTasks)
         }.value
         guard generation == current, groupingID == id else { return }
         today = groups.0
         overdue = groups.1
         warnings = groups.2
         week = groups.3
+        projectTasks = groups.4
     }
 
     private func message(for error: Error) -> String {
