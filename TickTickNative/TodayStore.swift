@@ -5,10 +5,12 @@ import Observation
 @Observable
 final class TodayStore {
     var isSavingTask = false
+    var pendingCompletions: [CompletionReceipt] = []
+    var completionRecordError = false
     var pendingCreation: PendingCreation?
     var creationRecordError = false
     var canWrite: Bool { self.isDemo || self.connection?.canWrite == true }
-    var writableProjects: [TickProject] { snapshot.projects.filter { $0.permission != "read" && $0.kind != "NOTE" } }
+    var writableProjects: [TickProject] { snapshot.projects.filter { $0.isWritable && $0.kind != "NOTE" } }
     var today: [ListedTask] = []
     var overdue: [ListedTask] = []
     var warnings: [String] = []
@@ -21,6 +23,7 @@ final class TodayStore {
     var projectCount = 0
     let isDemo: Bool
 
+    private let completionJournal: CompletionJournal
     private let creationJournal: CreationJournal
     private let api: TickTickAPI
     private let browser = OAuthBrowser()
@@ -34,11 +37,12 @@ final class TodayStore {
     private var restored = false
     private var snapshot = TaskSnapshot()
 
-    init(isDemo: Bool = false, api: TickTickAPI = TickTickAPI(), initialConnection: TickConnection? = nil, creationJournal: CreationJournal = CreationJournal()) {
+    init(isDemo: Bool = false, api: TickTickAPI = TickTickAPI(), initialConnection: TickConnection? = nil, creationJournal: CreationJournal = CreationJournal(), completionJournal: CompletionJournal = CompletionJournal(filename: "pending-completions.json")) {
         self.isDemo = isDemo
         self.api = api
         self.connection = initialConnection
         self.creationJournal = creationJournal
+        self.completionJournal = completionJournal
         self.isConnected = initialConnection != nil
     }
 
@@ -46,6 +50,8 @@ final class TodayStore {
         guard !restored else { return }
         restored = true
         if isDemo { await loadDemo(); return }
+        do { pendingCompletions = try completionJournal.load() ?? [] }
+        catch { completionRecordError = true; errorMessage = "完了記録を読み出せないため、完了操作を停止しています。" }
         do { pendingCreation = try creationJournal.load() }
         catch { creationRecordError = true; errorMessage = "追加記録を読み出せません。二重登録を防ぐため追加を停止しています。" }
         do {
@@ -58,7 +64,7 @@ final class TodayStore {
     }
 
     func connect(clientID: String, secret: String, allowWrite: Bool = false) async {
-        guard !isAuthorizing && !isLoading && !isSavingTask && pendingCreation == nil && !isDemo else { return }
+        guard !isAuthorizing && !isLoading && !isSavingTask && pendingCreation == nil && pendingCompletions.isEmpty && !completionRecordError && !isDemo else { return }
         generation = UUID()
         let current = generation
         isAuthorizing = true
@@ -103,6 +109,7 @@ final class TodayStore {
             projectCount = snapshot.projectCount
             updatedAt = .now
             needsAuthorization = false
+            try await reconcileCompletions()
             await regroup()
         } catch {
             guard generation == current else { return }
@@ -113,7 +120,12 @@ final class TodayStore {
 
     func completeTask(_ item: ListedTask) async -> Bool {
         guard canWrite, !isSavingTask, !isAuthorizing, !isLoading, !needsAuthorization else { return false }
-        guard item.task.repeatFlag?.isEmpty != false else {
+        if let project = snapshot.projects.first(where: { $0.id == item.task.projectId }), !project.isWritable { return false }
+        guard !completionRecordError, !pendingCompletions.contains(where: { $0.taskID == item.task.id && $0.projectID == item.task.projectId }) else {
+            errorMessage = "前回の完了結果が未確認です。更新して確認してください。再送していません。"
+            return false
+        }
+        guard SimpleRecurrence.matching(item.task.repeatFlag) != nil else {
             errorMessage = TickTickError.recurringNotSupported.localizedDescription
             return false
         }
@@ -124,7 +136,13 @@ final class TodayStore {
             var confirmed = item.task
             if isDemo { confirmed.status = 2 }
             else if let connection {
-                confirmed = try await api.complete(projectID: item.task.projectId, taskID: item.task.id, token: connection.accessToken)
+                if item.task.repeatFlag?.isEmpty == false {
+                    let receipt = CompletionReceipt(taskID: item.task.id, projectID: item.task.projectId, previousDue: item.task.dueDate)
+                    try completionJournal.save(pendingCompletions + [receipt])
+                    pendingCompletions.append(receipt)
+                }
+                confirmed = try await api.complete(projectID: item.task.projectId, taskID: item.task.id, token: connection.accessToken, expected: item.task)
+                try clearCompletion(taskID: item.task.id, projectID: item.task.projectId)
             } else { return false }
             if let index = snapshot.tasks.firstIndex(where: { $0.id == item.id }) {
                 snapshot.tasks[index] = ListedTask(task: confirmed, projectName: item.projectName)
@@ -137,6 +155,55 @@ final class TodayStore {
             errorMessage = message(for: error)
             return false
         }
+    }
+
+    func resolvePendingCompletions() {
+        guard !isSavingTask else { return }
+        do {
+            try completionJournal.clear()
+            pendingCompletions = []
+            completionRecordError = false
+        } catch { errorMessage = "完了記録を解除できませんでした。" }
+    }
+
+    private func clearCompletion(taskID: String, projectID: String) throws {
+        let remaining = pendingCompletions.filter { $0.taskID != taskID || $0.projectID != projectID }
+        if remaining.isEmpty { try completionJournal.clear() } else { try completionJournal.save(remaining) }
+        pendingCompletions = remaining
+    }
+
+    private func reconcileCompletions() async throws {
+        guard let connection else { return }
+        for receipt in pendingCompletions {
+            let task = try await api.task(projectID: receipt.projectID, taskID: receipt.taskID, token: connection.accessToken)
+            let schedule = TaskSchedule(calendar: .current)
+            let before = receipt.previousDue.flatMap { schedule.date($0, allDay: task.isAllDay == true) }
+            let after = task.dueDate.flatMap { schedule.date($0, allDay: task.isAllDay == true) }
+            if task.status == 2 || (before != nil && after != nil && after! > before!) {
+                try clearCompletion(taskID: receipt.taskID, projectID: receipt.projectID)
+            }
+        }
+    }
+
+    func record(for item: ListedTask) async throws -> TaskRecord {
+        guard let connection else { throw TickTickError.unauthorized }
+        return try await api.record(projectID: item.task.projectId, taskID: item.task.id, token: connection.accessToken)
+    }
+
+    func saveRecurrence(record: TaskRecord, date: Date, allDay: Bool, recurrence: SimpleRecurrence) async -> Bool {
+        guard canWrite, !isSavingTask, !isLoading, !needsAuthorization, let connection else { return false }
+        isSavingTask = true
+        defer { isSavingTask = false }
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = .current
+        let value = formatter.string(from: allDay ? Calendar.current.startOfDay(for: date) : date)
+        do {
+            let confirmed = try await api.update(record: record, changes: ["startDate": .string(value), "dueDate": .string(value),
+                "isAllDay": .bool(allDay), "timeZone": .string(TimeZone.current.identifier), "repeatFlag": .string(recurrence.rule)], token: connection.accessToken)
+            guard confirmed.fields["repeatFlag"]?.string == recurrence.rule else { throw TickTickError.invalidResponse }
+            await refresh()
+            return true
+        } catch { errorMessage = message(for: error); return false }
     }
 
     func createTask(title: String, projectID: String) async -> Bool {
@@ -216,7 +283,7 @@ final class TodayStore {
 
     func disconnect() {
         guard !isDemo else { return }
-        guard !isSavingTask, pendingCreation == nil, !creationRecordError else {
+        guard !isSavingTask, pendingCreation == nil, !creationRecordError, pendingCompletions.isEmpty, !completionRecordError else {
             errorMessage = "追加処理または未確認の追加記録が残っています。保存結果を確認してから接続を解除してください。"
             return
         }

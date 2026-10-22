@@ -1,6 +1,8 @@
 import Foundation
 
 nonisolated enum TickTickError: LocalizedError {
+    case conflict
+    case unsupportedFields
     case recurringNotSupported
     case completionUncertain
     case invalidInput
@@ -17,6 +19,8 @@ nonisolated enum TickTickError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .conflict: "別の場所でタスクが変更されました。読み直して変更内容を確認してください。"
+        case .unsupportedFields: "このタスクには未対応の情報があるため、安全に変更できません。元の内容は変更していません。"
         case .recurringNotSupported: "繰り返しタスクの完了は、繰り返し対応後に利用できます。"
         case .completionUncertain: "完了状態を確認できませんでした。更新して状態を確認してください。自動再送はしません。"
         case .invalidInput: "タイトルと保存先リストを指定してください。"
@@ -126,10 +130,31 @@ actor TickTickAPI {
         try await get("project/\(projectID)/task/\(taskID)", token: token)
     }
 
-    func complete(projectID: String, taskID: String, token: String) async throws -> TickTask {
+    func record(projectID: String, taskID: String, token: String) async throws -> TaskRecord {
+        try await get("project/\(projectID)/task/\(taskID)", token: token)
+    }
+
+    func update(record: TaskRecord, changes: [String: JSONValue], token: String) async throws -> TaskRecord {
+        let original = try record.task()
+        let current = try await self.record(projectID: original.projectId, taskID: original.id, token: token)
+        guard current == record else { throw TickTickError.conflict }
+        let body = try current.updating(changes)
+        var request = URLRequest(url: URL(string: "https://api.ticktick.com/open/v1/task/\(original.id)")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        _ = try await perform(request)
+        return try await self.record(projectID: original.projectId, taskID: original.id, token: token)
+    }
+
+    func complete(projectID: String, taskID: String, token: String, expected: TickTask? = nil) async throws -> TickTask {
         let current = try await task(projectID: projectID, taskID: taskID, token: token)
         if current.status == 2 { return current }
-        guard current.repeatFlag?.isEmpty != false else { throw TickTickError.recurringNotSupported }
+        if current.repeatFlag?.isEmpty == false {
+            guard SimpleRecurrence.matching(current.repeatFlag) != nil, let expected else { throw TickTickError.recurringNotSupported }
+            guard current.dueDate == expected.dueDate, current.startDate == expected.startDate else { throw TickTickError.conflict }
+        }
         var request = URLRequest(url: URL(string: "https://api.ticktick.com/open/v1/project/\(projectID)/task/\(taskID)/complete")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -137,8 +162,14 @@ actor TickTickAPI {
         do { _ = try await perform(request) }
         catch { failure = error }
         let confirmed = try await task(projectID: projectID, taskID: taskID, token: token)
-        guard confirmed.status == 2 else { throw failure ?? TickTickError.completionUncertain }
-        return confirmed
+        if confirmed.status == 2 { return confirmed }
+        if current.repeatFlag?.isEmpty == false,
+           let beforeRaw = current.dueDate, let afterRaw = confirmed.dueDate {
+            let schedule = TaskSchedule(calendar: .current)
+            if let before = schedule.date(beforeRaw, allDay: current.isAllDay == true),
+               let after = schedule.date(afterRaw, allDay: confirmed.isAllDay == true), after > before { return confirmed }
+        }
+        throw failure ?? TickTickError.completionUncertain
     }
 
     private func get<T: Decodable>(_ path: String, token: String, query: [URLQueryItem] = []) async throws -> T {

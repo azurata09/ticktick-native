@@ -1,14 +1,15 @@
 import Foundation
 
-nonisolated struct TickProject: Decodable, Sendable {
+nonisolated struct TickProject: Codable, Sendable {
     let id: String
     let name: String
     var closed: Bool? = nil
     var permission: String? = nil
     var kind: String? = nil
+    var isWritable: Bool { permission == nil || permission == "write" }
 }
 
-nonisolated struct TickTask: Decodable, Sendable {
+nonisolated struct TickTask: Codable, Sendable {
     let id: String
     let projectId: String
     let title: String

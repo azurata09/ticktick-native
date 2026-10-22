@@ -5,6 +5,7 @@ struct ContentView: View {
     @State private var showsConnection = false
     @State private var showsCreate = false
     @State private var confirmsResolution = false
+    @State private var confirmsCompletionResolution = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,6 +36,12 @@ struct ContentView: View {
                     Text("結果未確認の追加記録があります。TickTickで保存先を確認してください。再送は停止しています。")
                     Button("確認後に追加記録を解除…") { confirmsResolution = true }.disabled(store.isSavingTask)
                 }.padding(.horizontal, 24)
+            }
+            if !store.pendingCompletions.isEmpty || store.completionRecordError {
+                Button("TickTickで確認後に完了記録を解除…") { confirmsCompletionResolution = true }
+                    .disabled(store.isSavingTask).padding(.horizontal, 24)
+                Text("結果未確認の完了記録があります。更新でサーバーの状態を確認し、確認できるまで再送しません。")
+                    .foregroundStyle(.orange).padding(.horizontal, 24)
             }
             if store.isConnected || store.isDemo {
                 taskList
@@ -71,6 +78,9 @@ struct ContentView: View {
         .sheet(isPresented: $showsCreate) { CreateTaskView(store: store) }
         .confirmationDialog("保存結果をTickTickで確認しましたか？記録の解除はタスクを再送しません。", isPresented: $confirmsResolution) {
             Button("確認済みとして記録を解除") { store.resolvePendingCreation() }
+        }
+        .confirmationDialog("TickTickで次回予定または完了状態を確認しましたか？解除後の完了操作は、次回分を完了する可能性があります。", isPresented: $confirmsCompletionResolution) {
+            Button("確認済みとして完了記録を解除") { store.resolvePendingCompletions() }
         }
         .task { await store.restore() }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in Task { await store.regroup() } }
@@ -130,6 +140,7 @@ private struct TaskRow: View {
     let item: ListedTask
     let overdue: Bool
     @Bindable var store: TodayStore
+    @State private var showsRecurrence = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -140,8 +151,8 @@ private struct TaskRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("完了にする：" + item.task.title)
-            .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.needsAuthorization || item.task.repeatFlag?.isEmpty == false)
-            .help(item.task.repeatFlag?.isEmpty == false ? "繰り返しタスクは後続の対応で完了できます" : "タスクを完了にする")
+            .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.needsAuthorization || SimpleRecurrence.matching(item.task.repeatFlag) == nil || store.completionRecordError || store.pendingCompletions.contains { $0.taskID == item.task.id && $0.projectID == item.task.projectId })
+            .help("タスクを完了にする")
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.task.title).textSelection(.enabled)
                 HStack {
@@ -158,6 +169,10 @@ private struct TaskRow: View {
             Spacer()
         }
         .padding(.vertical, 8)
+        .contextMenu {
+            Button("繰り返しと開始予定…") { showsRecurrence = true }.disabled(!store.canWrite || store.isDemo)
+        }
+        .sheet(isPresented: $showsRecurrence) { RecurrenceView(item: item, store: store) }
     }
 }
 
@@ -246,5 +261,57 @@ private struct CreateTaskView: View {
         }.padding(24).frame(width: 480)
         .interactiveDismissDisabled(store.isSavingTask)
         .onAppear { projectID = store.writableProjects.first?.id ?? "" }
+    }
+}
+
+private struct RecurrenceView: View {
+    let item: ListedTask
+    @Bindable var store: TodayStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var record: TaskRecord?
+    @State private var date = Date.now
+    @State private var allDay = true
+    @State private var recurrence = SimpleRecurrence.none
+    @State private var error: String?
+    @State private var supported = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("繰り返しと開始予定").font(.title2)
+            Text(item.task.title)
+            if let error { Text(error).foregroundStyle(.red) }
+            if let error = store.errorMessage { Text(error).foregroundStyle(.red) }
+            if record != nil {
+                DatePicker("開始予定", selection: $date, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
+                Toggle("終日", isOn: $allDay)
+                Picker("繰り返し", selection: $recurrence) {
+                    ForEach(SimpleRecurrence.allCases) { Text($0.rawValue).tag($0) }
+                }
+                Text("開始と終了を同じ日時に設定します。次回予定はTickTickで生成されます。")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if error == nil { ProgressView() }
+            HStack {
+                Button("キャンセル") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("保存") {
+                    guard let record else { return }
+                    Task { if await store.saveRecurrence(record: record, date: date, allDay: allDay, recurrence: recurrence) { dismiss() } }
+                }.keyboardShortcut(.defaultAction)
+                    .disabled(record == nil || !supported || store.isSavingTask)
+            }
+        }.padding(24).frame(width: 480)
+            .interactiveDismissDisabled(store.isSavingTask)
+            .task {
+                do {
+                    let loaded = try await store.record(for: item)
+                    record = loaded
+                    let task = try loaded.task()
+                    if let value = SimpleRecurrence.matching(task.repeatFlag) { recurrence = value; supported = true }
+                    else { error = "既存の繰り返しルールは未対応です。変更せず保持します。" }
+                    allDay = task.isAllDay == true
+                    if let raw = task.startDate ?? task.dueDate,
+                       let parsed = TaskSchedule(calendar: .current).date(raw, allDay: allDay) { date = parsed }
+                } catch { self.error = error.localizedDescription }
+            }
     }
 }
