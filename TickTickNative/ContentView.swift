@@ -3,6 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @State private var store = TodayStore(isDemo: ProcessInfo.processInfo.arguments.contains("--demo") || ProcessInfo.processInfo.environment["TICKTICK_TESTING"] == "1")
     @State private var showsConnection = false
+    @State private var showsCreate = false
+    @State private var confirmsResolution = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -17,7 +19,7 @@ struct ContentView: View {
                 if store.isDemo {
                     Text("サンプル表示").foregroundStyle(.secondary)
                 } else if store.isConnected {
-                    Text("読み取り専用").foregroundStyle(.secondary)
+                    Text(store.canWrite ? "読み書き接続" : "読み取り専用").foregroundStyle(.secondary)
                 }
             }
             .padding(24)
@@ -28,6 +30,12 @@ struct ContentView: View {
                     .padding(.horizontal, 24).padding(.bottom, 12)
             }
 
+            if store.pendingCreation != nil || store.creationRecordError {
+                VStack(alignment: .leading) {
+                    Text("結果未確認の追加記録があります。TickTickで保存先を確認してください。再送は停止しています。")
+                    Button("確認後に追加記録を解除…") { confirmsResolution = true }.disabled(store.isSavingTask)
+                }.padding(.horizontal, 24)
+            }
             if store.isConnected || store.isDemo {
                 taskList
                 coverage
@@ -46,17 +54,24 @@ struct ContentView: View {
         .frame(minWidth: 620, minHeight: 480)
         .toolbar {
             if store.isConnected || store.isDemo {
+                Button { showsCreate = true } label: { Label("タスクを追加", systemImage: "plus") }
+                    .keyboardShortcut("n")
+                    .disabled(!store.canWrite || store.isSavingTask || store.isLoading || store.pendingCreation != nil || store.creationRecordError || store.needsAuthorization)
                 Button { Task { await store.refresh() } } label: {
                     Label("更新", systemImage: "arrow.clockwise")
                 }
                 .keyboardShortcut("r")
-                .disabled(store.isLoading || store.needsAuthorization)
+                .disabled(store.isLoading || store.isSavingTask || store.needsAuthorization)
             }
             if !store.isDemo {
                 Button(store.needsAuthorization ? "接続し直す…" : "接続設定…") { showsConnection = true }
             }
         }
         .sheet(isPresented: $showsConnection) { ConnectionView(store: store) }
+        .sheet(isPresented: $showsCreate) { CreateTaskView(store: store) }
+        .confirmationDialog("保存結果をTickTickで確認しましたか？記録の解除はタスクを再送しません。", isPresented: $confirmsResolution) {
+            Button("確認済みとして記録を解除") { store.resolvePendingCreation() }
+        }
         .task { await store.restore() }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in Task { await store.regroup() } }
         .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in Task { await store.regroup() } }
@@ -144,6 +159,7 @@ private struct ConnectionView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var clientID = ""
     @State private var secret = ""
+    @State private var allowWrite = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -155,7 +171,8 @@ private struct ConnectionView: View {
             TextField("Client ID", text: $clientID)
                 .textFieldStyle(.roundedBorder).disableAutocorrection(true)
             SecureField("Client Secret", text: $secret).textFieldStyle(.roundedBorder)
-            Text("ブラウザで認証すると、リストとタスクを読み取ります。タスクの追加、変更、削除は行いません。")
+            Toggle("タスクの作成と更新を許可する", isOn: $allowWrite)
+            Text(allowWrite ? "読み取りと書き込みの権限を要求します。操作したタスクだけを変更します。" : "読み取り専用で接続します。追加や変更には書き込み権限での再認証が必要です。")
                 .font(.callout).foregroundStyle(.secondary)
             if let error = store.errorMessage { Text(error).foregroundStyle(.red) }
             HStack {
@@ -172,7 +189,7 @@ private struct ConnectionView: View {
                     let id = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
                     let value = secret
                     Task {
-                        await store.connect(clientID: id, secret: value)
+                        await store.connect(clientID: id, secret: value, allowWrite: allowWrite)
                         if store.isConnected && !store.needsAuthorization && store.errorMessage == nil {
                             secret = ""
                             dismiss()
@@ -187,6 +204,40 @@ private struct ConnectionView: View {
         .onAppear {
             clientID = store.savedClientID
             secret = store.savedClientSecret
+            allowWrite = store.canWrite
         }
+    }
+}
+
+private struct CreateTaskView: View {
+    @Bindable var store: TodayStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var projectID = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("今日やることを追加").font(.title2.bold())
+            TextField("タスクのタイトル", text: $title).textFieldStyle(.roundedBorder)
+            Picker("保存先", selection: $projectID) {
+                Text("リストを選択").tag("")
+                ForEach(store.writableProjects, id: \.id) { Text($0.name).tag($0.id) }
+            }
+            if let error = store.errorMessage { Text(error).foregroundStyle(.red) }
+            if store.pendingCreation != nil {
+                Text("保存結果を確認するまで再送できません。画面を閉じ、TickTickで確認してください。")
+            }
+            HStack {
+                Button("キャンセル") { dismiss() }.disabled(store.isSavingTask).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(store.isSavingTask ? "保存中…" : "追加") {
+                    Task { if await store.createTask(title: title, projectID: projectID) { dismiss() } }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || projectID.isEmpty || store.isSavingTask || store.pendingCreation != nil)
+            }
+        }.padding(24).frame(width: 480)
+        .interactiveDismissDisabled(store.isSavingTask)
+        .onAppear { projectID = store.writableProjects.first?.id ?? "" }
     }
 }

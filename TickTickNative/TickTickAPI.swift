@@ -1,6 +1,8 @@
 import Foundation
 
 nonisolated enum TickTickError: LocalizedError {
+    case invalidInput
+    case creationUncertain
     case unauthorized
     case http(Int)
     case invalidResponse
@@ -13,6 +15,8 @@ nonisolated enum TickTickError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .invalidInput: "タイトルと保存先リストを指定してください。"
+        case .creationUncertain: "追加の結果を確認できません。二重登録を防ぐため、保存先を確認するまで再送しません。"
         case .unauthorized: "認証が失効したか、権限がありません。接続し直してください。"
         case .http(let code): "TickTickへの通信に失敗しました（HTTP \(code)）。時間を置いて再試行してください。"
         case .invalidResponse: "TickTickからの応答を読み取れませんでした。"
@@ -43,7 +47,7 @@ actor TickTickAPI {
         self.session = session ?? URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }
 
-    func exchange(code: String, clientID: String, secret: String) async throws -> String {
+    func exchange(code: String, clientID: String, secret: String, allowWrite: Bool = false) async throws -> String {
         var request = URLRequest(url: URL(string: "https://ticktick.com/oauth/token")!)
         request.httpMethod = "POST"
         let credentials = Data("\(clientID):\(secret)".utf8).base64EncodedString()
@@ -52,7 +56,7 @@ actor TickTickAPI {
         request.httpBody = OAuthFlow.form([
             "code": code,
             "grant_type": "authorization_code",
-            "scope": "tasks:read",
+            "scope": allowWrite ? "tasks:read tasks:write" : "tasks:read",
             "redirect_uri": OAuthFlow.redirectURI
         ])
         struct Token: Decodable { let access_token: String }
@@ -82,6 +86,7 @@ actor TickTickAPI {
                 let data: ProjectData = try await get("project/\(project.id)/data", token: token)
                 result.tasks += data.tasks.map { ListedTask(task: $0, projectName: project.name) }
                 result.projectCount += 1
+                result.projects.append(project)
             } catch TickTickError.unauthorized {
                 throw TickTickError.unauthorized
             } catch is CancellationError {
@@ -92,6 +97,29 @@ actor TickTickAPI {
             }
         }
         return result
+    }
+
+    func create(title: String, projectID: String, date: Date, token: String) async throws -> TickTask {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !projectID.isEmpty else { throw TickTickError.invalidInput }
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = .current
+        let rawDate = formatter.string(from: Calendar.current.startOfDay(for: date))
+        let body: [String: Any] = ["title": title, "projectId": projectID, "isAllDay": true,
+                                    "startDate": rawDate, "dueDate": rawDate,
+                                    "timeZone": TimeZone.current.identifier]
+        var request = URLRequest(url: URL(string: "https://api.ticktick.com/open/v1/task")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let task: TickTask = try await send(request)
+        guard !task.id.isEmpty, task.projectId == projectID else { throw TickTickError.creationUncertain }
+        return task
+    }
+
+    func task(projectID: String, taskID: String, token: String) async throws -> TickTask {
+        try await get("project/\(projectID)/task/\(taskID)", token: token)
     }
 
     private func get<T: Decodable>(_ path: String, token: String, query: [URLQueryItem] = []) async throws -> T {

@@ -21,7 +21,7 @@ nonisolated final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
 @Suite("API", .serialized)
 struct APITests {
-    private func api(_ handler: @escaping (URLRequest) throws -> (Int, Data)) -> TickTickAPI {
+    func api(_ handler: @escaping (URLRequest) throws -> (Int, Data)) -> TickTickAPI {
         StubURLProtocol.handler = handler
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]

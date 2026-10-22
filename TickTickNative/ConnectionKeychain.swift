@@ -5,6 +5,7 @@ nonisolated struct TickConnection: Codable, Sendable {
     let clientID: String
     let clientSecret: String
     let accessToken: String
+    var canWrite: Bool? = nil
 }
 
 enum ConnectionKeychain {

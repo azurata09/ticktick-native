@@ -4,6 +4,8 @@ nonisolated struct TickProject: Decodable, Sendable {
     let id: String
     let name: String
     var closed: Bool? = nil
+    var permission: String? = nil
+    var kind: String? = nil
 }
 
 nonisolated struct TickTask: Decodable, Sendable {
@@ -30,6 +32,7 @@ nonisolated struct TaskSnapshot: Sendable {
     var tasks: [ListedTask] = []
     var warnings: [String] = []
     var projectCount = 0
+    var projects: [TickProject] = []
 }
 
 nonisolated enum DayBucket: Equatable {

@@ -14,12 +14,12 @@ final class OAuthBrowser {
         self.openURL = openURL
     }
 
-    func authorize(clientID: String) async throws -> String {
+    func authorize(clientID: String, allowWrite: Bool = false) async throws -> String {
         cancel()
         let id = UUID()
         requestID = id
         let state = UUID().uuidString + UUID().uuidString
-        let url = OAuthFlow.authorizationURL(clientID: clientID, state: state)
+        let url = OAuthFlow.authorizationURL(clientID: clientID, state: state, allowWrite: allowWrite)
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: OAuthFlow.port)
         let listener = try NWListener(using: parameters)
@@ -117,11 +117,11 @@ nonisolated enum OAuthFlow {
     static let port = NWEndpoint.Port(rawValue: 49217)!
     static let redirectURI = "http://127.0.0.1:49217/callback"
 
-    static func authorizationURL(clientID: String, state: String) -> URL {
+    static func authorizationURL(clientID: String, state: String, allowWrite: Bool = false) -> URL {
         var url = URLComponents(string: "https://ticktick.com/oauth/authorize")!
         url.queryItems = [
             URLQueryItem(name: "client_id", value: clientID),
-            URLQueryItem(name: "scope", value: "tasks:read"),
+            URLQueryItem(name: "scope", value: allowWrite ? "tasks:read tasks:write" : "tasks:read"),
             URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "response_type", value: "code")
