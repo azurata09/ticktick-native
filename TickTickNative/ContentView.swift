@@ -145,6 +145,7 @@ private struct TaskRow: View {
     @Bindable var store: TodayStore
     @State private var showsRecurrence = false
     @State private var showsReminder = false
+    @State private var showsDetail = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -174,11 +175,13 @@ private struct TaskRow: View {
         }
         .padding(.vertical, 8)
         .contextMenu {
+            Button("詳細を表示…") { showsDetail = true }
             Button("このMacの通知…") { showsReminder = true }.disabled(store.isDemo)
             Button("繰り返しと開始予定…") { showsRecurrence = true }.disabled(!store.canWrite || store.isDemo)
         }
         .sheet(isPresented: $showsRecurrence) { RecurrenceView(item: item, store: store) }
         .sheet(isPresented: $showsReminder) { ReminderView(item: item, store: store) }
+        .sheet(isPresented: $showsDetail) { TaskDetailView(item: item, store: store) }
     }
 }
 

@@ -131,7 +131,9 @@ actor TickTickAPI {
     }
 
     func record(projectID: String, taskID: String, token: String) async throws -> TaskRecord {
-        try await get("project/\(projectID)/task/\(taskID)", token: token)
+        let record: TaskRecord = try await get("project/\(projectID)/task/\(taskID)", token: token)
+        guard record.fields["id"]?.string == taskID, record.fields["projectId"]?.string == projectID else { throw TickTickError.invalidResponse }
+        return record
     }
 
     func update(record: TaskRecord, changes: [String: JSONValue], token: String) async throws -> TaskRecord {

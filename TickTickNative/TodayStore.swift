@@ -208,6 +208,13 @@ final class TodayStore {
     }
 
     func record(for item: ListedTask) async throws -> TaskRecord {
+        if isDemo {
+            var record = try JSONDecoder().decode(TaskRecord.self, from: JSONEncoder().encode(item.task))
+            record.fields["content"] = .string(String(repeating: "作業の背景と確認する手順をここに表示します。\n", count: 12))
+            record.fields["priority"] = .integer(3)
+            record.fields["items"] = .array([.object(["title": .string("手順を確認する"), "status": .integer(1)]), .object(["title": .string("実行する"), "status": .integer(0)])])
+            return record
+        }
         guard let connection else { throw TickTickError.unauthorized }
         return try await api.record(projectID: item.task.projectId, taskID: item.task.id, token: connection.accessToken)
     }
